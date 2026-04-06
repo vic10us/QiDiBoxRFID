@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QIDI Box - Hardware Settings</title>
+<style>
+  :root {
+    --bg: #0d0f12; --surface: #151820; --border: #1f2530;
+    --accent: #e8ff47; --accent2: #47c8ff; --text: #e8eaf0;
+    --muted: #5a6070; --success: #47ffaa; --error: #ff5c6a;
+    --radius: 12px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh; display: flex; align-items: flex-start;
+    justify-content: center; padding: 24px;
+  }
+  .container { width: 100%; max-width: 480px; }
+  h1 { font-size: 24px; font-weight: 800; margin-bottom: 4px; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--accent); margin-bottom: 14px;
+  }
+  .field { margin-bottom: 12px; }
+  .field label {
+    display: block; font-size: 12px; font-weight: 600;
+    color: var(--muted); margin-bottom: 4px;
+  }
+  .field input, .field select {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; font-size: 14px; outline: none;
+    transition: border-color 0.15s;
+  }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+  .field select option { background: var(--bg); color: var(--text); }
+  .field-row { display: flex; gap: 12px; }
+  .field-row .field { flex: 1; }
+  .field input[type="color"] {
+    padding: 4px; height: 40px; cursor: pointer;
+  }
+  .field input[type="range"] {
+    padding: 0; height: 6px; -webkit-appearance: none; appearance: none;
+    background: var(--border); border: none; border-radius: 3px; cursor: pointer;
+  }
+  .field input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 18px; height: 18px;
+    background: var(--accent); border-radius: 50%; cursor: pointer;
+  }
+  .range-row { display: flex; align-items: center; gap: 10px; }
+  .range-val {
+    font-size: 13px; font-weight: 600; color: var(--accent);
+    min-width: 32px; text-align: right;
+  }
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 0;
+  }
+  .toggle-row label { margin: 0; font-size: 14px; color: var(--text); font-weight: 600; }
+  .toggle {
+    position: relative; width: 44px; height: 24px; cursor: pointer;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .slider {
+    position: absolute; inset: 0; background: var(--border);
+    border-radius: 12px; transition: 0.2s;
+  }
+  .toggle .slider::before {
+    content: ''; position: absolute; width: 18px; height: 18px;
+    left: 3px; top: 3px; background: var(--muted);
+    border-radius: 50%; transition: 0.2s;
+  }
+  .toggle input:checked + .slider { background: var(--accent); }
+  .toggle input:checked + .slider::before {
+    transform: translateX(20px); background: var(--bg);
+  }
+  .warn {
+    font-size: 11px; color: var(--error); margin-top: 4px;
+    padding: 6px 10px; background: rgba(255,92,106,0.06);
+    border: 1px solid rgba(255,92,106,0.2); border-radius: 6px;
+  }
+  .btn {
+    width: 100%; padding: 14px; margin-top: 8px;
+    background: var(--accent); color: #0d0f12; border: none;
+    border-radius: var(--radius); font-size: 15px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(232,255,71,0.25); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .btn-secondary {
+    background: transparent; color: var(--muted); border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { border-color: var(--muted); box-shadow: none; color: var(--text); }
+  .btn-danger {
+    background: transparent; color: var(--error); border: 1px solid var(--error);
+  }
+  .btn-danger:hover { background: rgba(255,92,106,0.1); box-shadow: none; }
+  .actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+  .msg {
+    margin-top: 12px; padding: 10px 14px; border-radius: 8px;
+    font-size: 13px; display: none; border: 1px solid;
+  }
+  .msg.show { display: block; }
+  .msg.ok { background: rgba(71,255,170,0.06); border-color: var(--success); color: var(--success); }
+  .msg.err { background: rgba(255,92,106,0.06); border-color: var(--error); color: var(--error); }
+  .back { display: inline-block; color: var(--muted); font-size: 13px; text-decoration: none; margin-top: 16px; border-bottom: 1px dashed var(--muted); }
+  .back:hover { color: var(--text); }
+  #colorSection { transition: opacity 0.2s; }
+  #colorSection.disabled { opacity: 0.3; pointer-events: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>QIDI <span>Box</span> Settings</h1>
+  <p class="sub">Hardware configuration</p>
+
+  <!-- LED Settings -->
+  <div class="card">
+    <div class="card-title">LED Indicator</div>
+    <div class="toggle-row">
+      <label>Enable LED</label>
+      <label class="toggle">
+        <input type="checkbox" id="ledEnabled" onchange="onLedTypeChange()">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label>LED Type</label>
+      <select id="ledType" onchange="onLedTypeChange()">
+        <option value="0">GPIO (on/off)</option>
+        <option value="1">WS2812 (RGB)</option>
+        <option value="2">SK6812 (RGBW)</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>LED Pin (GPIO)</label>
+        <input type="number" id="ledPin" min="0" max="48">
+      </div>
+      <div class="field">
+        <label>Brightness</label>
+        <div class="range-row">
+          <input type="range" id="ledBright" min="1" max="255" oninput="document.getElementById('brightVal').textContent=this.value">
+          <span class="range-val" id="brightVal">40</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LED Colors -->
+  <div class="card" id="colorSection">
+    <div class="card-title">Status Colors</div>
+    <div class="field-row">
+      <div class="field">
+        <label>Scanning</label>
+        <input type="color" id="cScan">
+      </div>
+      <div class="field">
+        <label>Success</label>
+        <input type="color" id="cOk">
+      </div>
+      <div class="field">
+        <label>Error</label>
+        <input type="color" id="cErr">
+      </div>
+    </div>
+    <div class="field-row" style="margin-top:8px">
+      <div class="field">
+        <label>Busy</label>
+        <input type="color" id="cBusy">
+      </div>
+      <div class="field">
+        <label>Setup</label>
+        <input type="color" id="cSetup">
+      </div>
+      <div class="field"></div>
+    </div>
+  </div>
+
+  <!-- Timings -->
+  <div class="card">
+    <div class="card-title">LED Timings</div>
+    <div class="field-row">
+      <div class="field">
+        <label>Success duration (ms)</label>
+        <input type="number" id="tOk" min="500" max="10000" step="100">
+      </div>
+      <div class="field">
+        <label>Error duration (ms)</label>
+        <input type="number" id="tErr" min="500" max="10000" step="100">
+      </div>
+    </div>
+  </div>
+
+  <!-- NFC Pins -->
+  <div class="card">
+    <div class="card-title">NFC (I2C) Pins</div>
+    <div class="field-row">
+      <div class="field">
+        <label>SDA Pin (GPIO)</label>
+        <input type="number" id="sdaPin" min="0" max="48">
+      </div>
+      <div class="field">
+        <label>SCL Pin (GPIO)</label>
+        <input type="number" id="sclPin" min="0" max="48">
+      </div>
+    </div>
+    <div class="warn">Changing I2C pins requires a device restart to take effect.</div>
+  </div>
+
+  <!-- Boot Pin -->
+  <div class="card">
+    <div class="card-title">Boot Button</div>
+    <div class="field">
+      <label>Boot Pin (GPIO)</label>
+      <input type="number" id="bootPin" min="0" max="48">
+    </div>
+    <div class="warn">GPIO 0 is always checked as a fallback reset trigger regardless of this setting.</div>
+  </div>
+
+  <!-- Actions -->
+  <div class="actions">
+    <button class="btn" id="saveBtn" onclick="saveConfig()">Save Settings</button>
+    <button class="btn btn-secondary" onclick="resetDefaults()">Reset to Defaults</button>
+    <button class="btn btn-danger" onclick="restartDevice()">Restart Device</button>
+  </div>
+
+  <div class="msg" id="msg"></div>
+  <a href="/" class="back">Back to main</a>
+</div>
+
+<script>
+  function showMsg(text, ok) {
+    var m = document.getElementById('msg');
+    m.className = 'msg show ' + (ok ? 'ok' : 'err');
+    m.textContent = text;
+  }
+
+  function onLedTypeChange() {
+    var cs = document.getElementById('colorSection');
+    var t = parseInt(document.getElementById('ledType').value);
+    var en = document.getElementById('ledEnabled').checked;
+    cs.className = (!en || t === 0) ? 'card disabled' : 'card';
+    cs.id = 'colorSection';
+  }
+
+  async function loadConfig() {
+    try {
+      var res = await fetch('/api/config');
+      var cfg = await res.json();
+      document.getElementById('ledEnabled').checked = cfg.led.enabled;
+      document.getElementById('ledType').value = cfg.led.type;
+      document.getElementById('ledPin').value = cfg.led.pin;
+      document.getElementById('ledBright').value = cfg.led.brightness;
+      document.getElementById('brightVal').textContent = cfg.led.brightness;
+      document.getElementById('cScan').value = cfg.colors.scan;
+      document.getElementById('cOk').value = cfg.colors.ok;
+      document.getElementById('cErr').value = cfg.colors.err;
+      document.getElementById('cBusy').value = cfg.colors.busy;
+      document.getElementById('cSetup').value = cfg.colors.setup;
+      document.getElementById('tOk').value = cfg.timings.ok_ms;
+      document.getElementById('tErr').value = cfg.timings.err_ms;
+      document.getElementById('sdaPin').value = cfg.i2c.sda;
+      document.getElementById('sclPin').value = cfg.i2c.scl;
+      document.getElementById('bootPin').value = cfg.boot_pin;
+      onLedTypeChange();
+    } catch(e) {
+      showMsg('Failed to load config: ' + e.message, false);
+    }
+  }
+
+  async function saveConfig() {
+    var btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    try {
+      var body = 'led_en=' + (document.getElementById('ledEnabled').checked ? '1' : '0')
+        + '&led_type=' + document.getElementById('ledType').value
+        + '&led_pin=' + document.getElementById('ledPin').value
+        + '&led_bright=' + document.getElementById('ledBright').value
+        + '&c_scan=' + encodeURIComponent(document.getElementById('cScan').value)
+        + '&c_ok=' + encodeURIComponent(document.getElementById('cOk').value)
+        + '&c_err=' + encodeURIComponent(document.getElementById('cErr').value)
+        + '&c_busy=' + encodeURIComponent(document.getElementById('cBusy').value)
+        + '&c_setup=' + encodeURIComponent(document.getElementById('cSetup').value)
+        + '&t_ok=' + document.getElementById('tOk').value
+        + '&t_err=' + document.getElementById('tErr').value
+        + '&i2c_sda=' + document.getElementById('sdaPin').value
+        + '&i2c_scl=' + document.getElementById('sclPin').value
+        + '&boot_pin=' + document.getElementById('bootPin').value;
+      var res = await fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: body
+      });
+      var data = await res.json();
+      if (data.ok) {
+        var msg = 'Settings saved!';
+        if (data.restart_required) msg += ' Restart required for I2C pin changes.';
+        showMsg(msg, true);
+      } else {
+        showMsg('Save failed.', false);
+      }
+    } catch(e) {
+      showMsg('Error: ' + e.message, false);
+    }
+    btn.disabled = false;
+  }
+
+  async function resetDefaults() {
+    if (!confirm('Reset all hardware settings to board defaults?')) return;
+    try {
+      var res = await fetch('/api/config/reset', {method: 'POST'});
+      var data = await res.json();
+      showMsg(data.message || 'Reset complete.', data.ok);
+      if (data.ok) loadConfig();
+    } catch(e) {
+      showMsg('Error: ' + e.message, false);
+    }
+  }
+
+  async function restartDevice() {
+    if (!confirm('Restart the device now?')) return;
+    try {
+      await fetch('/api/restart', {method: 'POST'});
+      showMsg('Restarting... page will reload in 5 seconds.', true);
+      setTimeout(function() { location.reload(); }, 5000);
+    } catch(e) {
+      showMsg('Restart sent. Reconnect when device is back online.', true);
+    }
+  }
+
+  loadConfig();
+</script>
+</body>
+</html>

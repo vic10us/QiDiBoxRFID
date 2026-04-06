@@ -1,10 +1,10 @@
 /**
  * QIDI Box NFC Tool
- * ESP32-S3 + PN532 (I2C, Generic V3 Module)
+ * ESP32 (S3/C3/C6) + PN532 (I2C, Generic V3 Module)
  *
  * Continuously reads NFC tags and displays their data via a web UI.
  * Also supports writing QIDI filament config (material + color) to tags.
- * Onboard RGB LED (GPIO 48) provides visual status feedback.
+ * LED indicator provides visual status feedback (configurable via /settings).
  *
  * Libraries required:
  *   - Adafruit PN532
@@ -12,11 +12,14 @@
  *   - ESPAsyncWebServer
  *   - AsyncTCP
  *
+ * Pin assignments and LED settings are configurable at runtime.
+ * See include/config.h for board defaults and the /settings web page.
+ *
  * Wiring (I2C mode - set DIP SW1=ON, SW2=OFF on PN532):
  *   PN532 VCC  → 3.3V
  *   PN532 GND  → GND
- *   PN532 SDA  → GPIO 8
- *   PN532 SCL  → GPIO 9
+ *   PN532 SDA  → see config (default varies by board)
+ *   PN532 SCL  → see config (default varies by board)
  */
 
 #include <Wire.h>
@@ -26,20 +29,18 @@
 #include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
 #include <Preferences.h>
+#include "config.h"
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-
-#define SDA_PIN 8
-#define SCL_PIN 9
-#define RGB_LED 48
-#define BOOT_PIN 0        // BOOT button on ESP32-S3-DevKitC-1
 
 #define AP_SSID "QidiBox-Setup"
 #define NVS_NAMESPACE "qidibox"
 
+HwConfig hwCfg;
+
 // ─── NFC ─────────────────────────────────────────────────────────────────────
 
-Adafruit_PN532 nfc(SDA_PIN, SCL_PIN);
+Adafruit_PN532* nfc = nullptr;
 
 uint8_t keyA[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 const uint8_t QIDI_BLOCK = 4;
@@ -97,8 +98,8 @@ uint8_t prevUidLen = 0;
 bool tagPresent = false;  // was a tag seen on the previous poll?
 
 // LED state management
-unsigned long ledGreenUntil = 0;
-unsigned long ledRedUntil = 0;
+unsigned long ledOkUntil = 0;
+unsigned long ledErrUntil = 0;
 
 // ─── WEB SERVER & WIFI ───────────────────────────────────────────────────────
 
@@ -109,15 +110,6 @@ bool apMode = false;       // true when running in AP/setup mode
 String storedSSID;
 String storedPass;
 
-// ─── LED HELPERS ─────────────────────────────────────────────────────────────
-
-void ledOff()    { neopixelWrite(RGB_LED, 0, 0, 0); }
-void ledBlue()   { neopixelWrite(RGB_LED, 0, 0, 40); }
-void ledGreen()  { neopixelWrite(RGB_LED, 0, 40, 0); }
-void ledYellow() { neopixelWrite(RGB_LED, 40, 30, 0); }
-void ledRed()    { neopixelWrite(RGB_LED, 40, 0, 0); }
-void ledPurple() { neopixelWrite(RGB_LED, 30, 0, 40); }
-
 // ─── EMBEDDED WEB FILES ─────────────────────────────────────────────────────
 // These are embedded at compile time via board_build.embed_txtfiles
 
@@ -125,6 +117,94 @@ extern const char index_html_start[] asm("_binary_data_index_html_start");
 extern const char style_css_start[]  asm("_binary_data_style_css_start");
 extern const char app_js_start[]     asm("_binary_data_app_js_start");
 extern const char setup_html_start[] asm("_binary_data_setup_html_start");
+extern const char settings_html_start[] asm("_binary_data_settings_html_start");
+
+// ─── SETTINGS ROUTES HELPER ─────────────────────────────────────────────────
+// Registered in both AP and normal mode
+
+void registerSettingsRoutes() {
+  server.on("/settings", HTTP_GET, [](AsyncWebServerRequest* req) {
+    req->send(200, "text/html", settings_html_start);
+  });
+
+  server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest* req) {
+    req->send(200, "application/json", configToJson(hwCfg));
+  });
+
+  server.on("/api/config", HTTP_POST, [](AsyncWebServerRequest* req) {
+    bool restartRequired = false;
+
+    // LED settings
+    if (req->hasParam("led_en", true))
+      hwCfg.ledEnabled = req->getParam("led_en", true)->value().toInt() != 0;
+    if (req->hasParam("led_type", true)) {
+      uint8_t t = req->getParam("led_type", true)->value().toInt();
+      if (t <= 2) hwCfg.ledType = (LedType)t;
+    }
+    if (req->hasParam("led_pin", true))
+      hwCfg.ledPin = req->getParam("led_pin", true)->value().toInt();
+    if (req->hasParam("led_bright", true))
+      hwCfg.ledBrightness = req->getParam("led_bright", true)->value().toInt();
+
+    // Colors
+    if (req->hasParam("c_scan", true))
+      hwCfg.colorScan = hexToColor(req->getParam("c_scan", true)->value());
+    if (req->hasParam("c_ok", true))
+      hwCfg.colorOk = hexToColor(req->getParam("c_ok", true)->value());
+    if (req->hasParam("c_err", true))
+      hwCfg.colorErr = hexToColor(req->getParam("c_err", true)->value());
+    if (req->hasParam("c_busy", true))
+      hwCfg.colorBusy = hexToColor(req->getParam("c_busy", true)->value());
+    if (req->hasParam("c_setup", true))
+      hwCfg.colorSetup = hexToColor(req->getParam("c_setup", true)->value());
+
+    // Timings
+    if (req->hasParam("t_ok", true))
+      hwCfg.durationOk = req->getParam("t_ok", true)->value().toInt();
+    if (req->hasParam("t_err", true))
+      hwCfg.durationErr = req->getParam("t_err", true)->value().toInt();
+
+    // I2C pins (restart required if changed)
+    if (req->hasParam("i2c_sda", true)) {
+      uint8_t newSda = req->getParam("i2c_sda", true)->value().toInt();
+      if (newSda != hwCfg.sdaPin) { hwCfg.sdaPin = newSda; restartRequired = true; }
+    }
+    if (req->hasParam("i2c_scl", true)) {
+      uint8_t newScl = req->getParam("i2c_scl", true)->value().toInt();
+      if (newScl != hwCfg.sclPin) { hwCfg.sclPin = newScl; restartRequired = true; }
+    }
+
+    // Boot pin
+    if (req->hasParam("boot_pin", true))
+      hwCfg.bootPin = req->getParam("boot_pin", true)->value().toInt();
+
+    // Save to NVS
+    configSave(hwCfg, prefs);
+
+    // Apply LED changes immediately
+    if (hwCfg.ledType == LED_GPIO) {
+      pinMode(hwCfg.ledPin, OUTPUT);
+    }
+
+    char resp[64];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"restart_required\":%s}",
+      restartRequired ? "true" : "false");
+    req->send(200, "application/json", resp);
+  });
+
+  server.on("/api/config/reset", HTTP_POST, [](AsyncWebServerRequest* req) {
+    configReset(prefs);
+    configLoad(hwCfg, prefs);
+    req->send(200, "application/json",
+      "{\"ok\":true,\"message\":\"Reset to defaults. Restart recommended.\"}");
+  });
+
+  server.on("/api/restart", HTTP_POST, [](AsyncWebServerRequest* req) {
+    req->send(200, "application/json", "{\"ok\":true}");
+    delay(500);
+    ESP.restart();
+  });
+}
 
 // ─── SETUP ───────────────────────────────────────────────────────────────────
 
@@ -133,17 +213,27 @@ void setup() {
   delay(500);
   Serial.println("\n=== QIDI NFC Tool ===");
 
+  // Load hardware config from NVS (with board-specific defaults)
+  configLoad(hwCfg, prefs);
+
+  // Init LED pin
+  if (hwCfg.ledType == LED_GPIO) {
+    pinMode(hwCfg.ledPin, OUTPUT);
+  }
   ledOff();
 
   // --- PN532 init ---
-  Wire.begin(SDA_PIN, SCL_PIN);
-  nfc.begin();
+  // Constructor uses these as IRQ/RESET pins (calls pinMode), so
+  // Wire.begin() must come AFTER to reconfigure them for I2C.
+  nfc = new Adafruit_PN532(hwCfg.sdaPin, hwCfg.sclPin);
+  Wire.begin(hwCfg.sdaPin, hwCfg.sclPin);
+  nfc->begin();
 
-  uint32_t versiondata = nfc.getFirmwareVersion();
+  uint32_t versiondata = nfc->getFirmwareVersion();
   if (!versiondata) {
     Serial.println("ERROR: PN532 not found. Check wiring and DIP switches.");
     while (1) {
-      ledRed();
+      ledErr();
       delay(500);
       ledOff();
       delay(500);
@@ -155,20 +245,24 @@ void setup() {
     (versiondata >> 16) & 0xFF,
     (versiondata >>  8) & 0xFF);
 
-  nfc.SAMConfig();
+  nfc->SAMConfig();
 
-  // --- BOOT button check: hold to reset WiFi ---
-  pinMode(BOOT_PIN, INPUT_PULLUP);
+  // --- BOOT button check: hold to reset WiFi + hardware config ---
+  // Always check GPIO 0 as hardcoded fallback to prevent bricking
+  pinMode(0, INPUT_PULLUP);
+  pinMode(hwCfg.bootPin, INPUT_PULLUP);
   delay(100);
-  if (digitalRead(BOOT_PIN) == LOW) {
-    Serial.println("BOOT button held — clearing WiFi credentials...");
+  if (digitalRead(0) == LOW || (hwCfg.bootPin != 0 && digitalRead(hwCfg.bootPin) == LOW)) {
+    Serial.println("BOOT button held — clearing all settings...");
     prefs.begin(NVS_NAMESPACE, false);
     prefs.remove("ssid");
     prefs.remove("pass");
     prefs.end();
-    // Flash red/purple to confirm reset
+    configReset(prefs);
+    configLoad(hwCfg, prefs); // reload defaults
+    // Flash to confirm reset
     for (int i = 0; i < 6; i++) {
-      ledPurple(); delay(200); ledOff(); delay(200);
+      ledSetup(); delay(200); ledOff(); delay(200);
     }
   }
 
@@ -182,7 +276,7 @@ void setup() {
     // No credentials — start AP mode for setup
     apMode = true;
     Serial.println("No WiFi credentials found. Starting setup AP...");
-    ledPurple();
+    ledSetup();
 
     WiFi.mode(WIFI_AP);
     WiFi.softAP(AP_SSID);
@@ -225,6 +319,9 @@ void setup() {
       ESP.restart();
     });
 
+    // Settings available in AP mode too (for hardware config before WiFi)
+    registerSettingsRoutes();
+
     // Captive portal: redirect all other requests to setup page
     server.onNotFound([](AsyncWebServerRequest* req) {
       req->redirect("http://" + WiFi.softAPIP().toString());
@@ -236,7 +333,7 @@ void setup() {
   }
 
   // --- Normal WiFi connection ---
-  ledYellow();
+  ledBusy();
   WiFi.mode(WIFI_STA);
   Serial.printf("Connecting to %s", storedSSID.c_str());
   WiFi.begin(storedSSID.c_str(), storedPass.c_str());
@@ -253,7 +350,7 @@ void setup() {
     // Fall back to AP mode so user can reconfigure
     WiFi.disconnect();
     apMode = true;
-    ledPurple();
+    ledSetup();
 
     WiFi.mode(WIFI_AP);
     WiFi.softAP(AP_SSID);
@@ -284,6 +381,10 @@ void setup() {
       delay(3000);
       ESP.restart();
     });
+
+    // Settings available in fallback AP mode too
+    registerSettingsRoutes();
+
     server.onNotFound([](AsyncWebServerRequest* req) {
       req->redirect("http://" + WiFi.softAPIP().toString());
     });
@@ -292,7 +393,7 @@ void setup() {
   }
 
   Serial.printf("\nConnected! IP: http://%s\n", WiFi.localIP().toString().c_str());
-  ledBlue();
+  ledScan();
 
   // --- Routes ---
 
@@ -432,7 +533,7 @@ void setup() {
     Serial.printf("Write request — Material: %d, Color: %d\n", material, color);
 
     nfcBusy = true;
-    ledYellow();
+    ledBusy();
 
     uint8_t uid[7];
     uint8_t uidLength;
@@ -440,15 +541,15 @@ void setup() {
 
     unsigned long deadline = millis() + 10000;
     while (millis() < deadline) {
-      if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 500)) {
+      if (nfc->readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 500)) {
         found = true;
         break;
       }
     }
 
     if (!found) {
-      ledRed();
-      ledRedUntil = millis() + 2000;
+      ledErr();
+      ledErrUntil = millis() + hwCfg.durationErr;
       nfcBusy = false;
       req->send(408, "text/plain", "No tag detected within 10 seconds. Try again.");
       return;
@@ -463,8 +564,8 @@ void setup() {
 
     // Only MIFARE Classic (4-byte UID) supports sector-based write
     if (ct != CARD_MIFARE_CLASSIC) {
-      ledRed();
-      ledRedUntil = millis() + 2000;
+      ledErr();
+      ledErrUntil = millis() + hwCfg.durationErr;
       nfcBusy = false;
       char errMsg[128];
       snprintf(errMsg, sizeof(errMsg),
@@ -474,9 +575,9 @@ void setup() {
       return;
     }
 
-    if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, QIDI_BLOCK, 0, keyA)) {
-      ledRed();
-      ledRedUntil = millis() + 2000;
+    if (!nfc->mifareclassic_AuthenticateBlock(uid, uidLength, QIDI_BLOCK, 0, keyA)) {
+      ledErr();
+      ledErrUntil = millis() + hwCfg.durationErr;
       nfcBusy = false;
       req->send(500, "text/plain",
         "Authentication failed. Tag may use non-default keys or is not MIFARE Classic 1K.");
@@ -488,18 +589,18 @@ void setup() {
     data[1] = color;
     data[2] = 0x01;
 
-    if (!nfc.mifareclassic_WriteDataBlock(QIDI_BLOCK, data)) {
-      ledRed();
-      ledRedUntil = millis() + 2000;
+    if (!nfc->mifareclassic_WriteDataBlock(QIDI_BLOCK, data)) {
+      ledErr();
+      ledErrUntil = millis() + hwCfg.durationErr;
       nfcBusy = false;
       req->send(500, "text/plain", "Write failed. Tag may be locked or damaged.");
       return;
     }
 
     uint8_t readback[16];
-    if (!nfc.mifareclassic_ReadDataBlock(QIDI_BLOCK, readback)) {
-      ledRed();
-      ledRedUntil = millis() + 2000;
+    if (!nfc->mifareclassic_ReadDataBlock(QIDI_BLOCK, readback)) {
+      ledErr();
+      ledErrUntil = millis() + hwCfg.durationErr;
       nfcBusy = false;
       req->send(500, "text/plain",
         "Write succeeded but verification read failed.");
@@ -507,8 +608,8 @@ void setup() {
     }
 
     if (readback[0] != material || readback[1] != color || readback[2] != 0x01) {
-      ledRed();
-      ledRedUntil = millis() + 2000;
+      ledErr();
+      ledErrUntil = millis() + hwCfg.durationErr;
       nfcBusy = false;
       req->send(500, "text/plain",
         "Verification failed — data mismatch after write.");
@@ -532,8 +633,8 @@ void setup() {
     prevUidLen = uidLength;
     memcpy(prevUid, uid, uidLength);
 
-    ledGreen();
-    ledGreenUntil = millis() + 3000;
+    ledOk();
+    ledOkUntil = millis() + hwCfg.durationOk;
     nfcBusy = false;
 
     char msg[96];
@@ -550,7 +651,7 @@ void setup() {
     Serial.println("Clear request received");
 
     nfcBusy = true;
-    ledYellow();
+    ledBusy();
 
     uint8_t uid[7];
     uint8_t uidLength;
@@ -558,14 +659,14 @@ void setup() {
 
     unsigned long deadline = millis() + 10000;
     while (millis() < deadline) {
-      if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 500)) {
+      if (nfc->readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 500)) {
         found = true;
         break;
       }
     }
 
     if (!found) {
-      ledRed(); ledRedUntil = millis() + 2000;
+      ledErr(); ledErrUntil = millis() + hwCfg.durationErr;
       nfcBusy = false;
       req->send(408, "text/plain", "No tag detected within 10 seconds.");
       return;
@@ -576,21 +677,21 @@ void setup() {
 
     if (ct == CARD_MIFARE_CLASSIC) {
       // Clear blocks 4-6 in sector 1 (skip block 7 = sector trailer!)
-      if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, QIDI_BLOCK, 0, keyA)) {
-        ledRed(); ledRedUntil = millis() + 2000;
+      if (!nfc->mifareclassic_AuthenticateBlock(uid, uidLength, QIDI_BLOCK, 0, keyA)) {
+        ledErr(); ledErrUntil = millis() + hwCfg.durationErr;
         nfcBusy = false;
         req->send(500, "text/plain", "Authentication failed.");
         return;
       }
       bool ok = true;
       for (uint8_t b = 4; b <= 6; b++) {
-        if (!nfc.mifareclassic_WriteDataBlock(b, zeros)) {
+        if (!nfc->mifareclassic_WriteDataBlock(b, zeros)) {
           ok = false;
           break;
         }
       }
       if (!ok) {
-        ledRed(); ledRedUntil = millis() + 2000;
+        ledErr(); ledErrUntil = millis() + hwCfg.durationErr;
         nfcBusy = false;
         req->send(500, "text/plain", "Clear failed — could not write to block.");
         return;
@@ -610,13 +711,13 @@ void setup() {
       uint8_t zeroPage[4] = {0};
       uint8_t cleared = 0;
       for (uint8_t page = 4; page < UL_PAGES_TO_READ; page++) {
-        if (!nfc.mifareultralight_WritePage(page, zeroPage)) {
+        if (!nfc->mifareultralight_WritePage(page, zeroPage)) {
           break; // Reached end of writable area
         }
         cleared++;
       }
       if (cleared == 0) {
-        ledRed(); ledRedUntil = millis() + 2000;
+        ledErr(); ledErrUntil = millis() + hwCfg.durationErr;
         nfcBusy = false;
         req->send(500, "text/plain", "Clear failed — could not write to any page.");
         return;
@@ -642,10 +743,13 @@ void setup() {
     prevUidLen = uidLength;
     memcpy(prevUid, uid, uidLength);
 
-    ledGreen(); ledGreenUntil = millis() + 3000;
+    ledOk(); ledOkUntil = millis() + hwCfg.durationOk;
     nfcBusy = false;
     req->send(200, "text/plain", "Tag cleared successfully.");
   });
+
+  // Settings routes (also in normal mode)
+  registerSettingsRoutes();
 
   server.onNotFound([](AsyncWebServerRequest* req) {
     req->send(404, "text/plain", "Not found.");
@@ -664,14 +768,14 @@ void loop() {
     return;
   }
 
-  // Handle LED timeout (return to blue after green/red flash)
-  if (ledGreenUntil && millis() > ledGreenUntil) {
-    ledGreenUntil = 0;
-    ledBlue();
+  // Handle LED timeout (return to scanning color after ok/err flash)
+  if (ledOkUntil && millis() > ledOkUntil) {
+    ledOkUntil = 0;
+    ledScan();
   }
-  if (ledRedUntil && millis() > ledRedUntil) {
-    ledRedUntil = 0;
-    ledBlue();
+  if (ledErrUntil && millis() > ledErrUntil) {
+    ledErrUntil = 0;
+    ledScan();
   }
 
   // Don't poll NFC while a write/clear is in progress
@@ -681,7 +785,7 @@ void loop() {
   uint8_t uid[7];
   uint8_t uidLength;
 
-  if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 500)) {
+  if (!nfc->readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 500)) {
     // No tag found — mark as absent so next detection is treated as new
     tagPresent = false;
     return;
@@ -702,7 +806,7 @@ void loop() {
   memcpy(prevUid, uid, uidLength);
 
   // Tag detected
-  ledYellow();
+  ledBusy();
 
   Serial.print("Tag detected — UID: ");
   for (int i = 0; i < uidLength; i++) {
@@ -726,7 +830,7 @@ void loop() {
     for (uint8_t sector = 0; sector < 4; sector++) {
       uint8_t firstBlock = sector * 4;
       // Authenticate each sector
-      if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, firstBlock, 0, keyA)) {
+      if (!nfc->mifareclassic_AuthenticateBlock(uid, uidLength, firstBlock, 0, keyA)) {
         Serial.printf("Sector %d auth failed\n", sector);
         if (sector == 0 && tag.blocksRead == 0) {
           tag.authFailed = true;
@@ -736,7 +840,7 @@ void loop() {
       // Read 4 blocks per sector (including trailer — useful for display)
       for (uint8_t b = 0; b < 4; b++) {
         uint8_t block = firstBlock + b;
-        if (nfc.mifareclassic_ReadDataBlock(block, tag.data + (block * 16))) {
+        if (nfc->mifareclassic_ReadDataBlock(block, tag.data + (block * 16))) {
           tag.blocksRead++;
           anyRead = true;
         }
@@ -752,8 +856,8 @@ void loop() {
         Serial.println("Read failed on all blocks.");
       }
       lastTag = tag;
-      ledRed();
-      ledRedUntil = millis() + 2000;
+      ledErr();
+      ledErrUntil = millis() + hwCfg.durationErr;
       delay(1000);
       return;
     }
@@ -773,7 +877,7 @@ void loop() {
     // Read pages until failure (card boundary) or max
     uint8_t buf[4];
     for (uint8_t page = 0; page < UL_PAGES_TO_READ; page++) {
-      if (!nfc.mifareultralight_ReadPage(page, buf)) {
+      if (!nfc->mifareultralight_ReadPage(page, buf)) {
         break; // Reached end of card or error
       }
       memcpy(tag.data + (page * 4), buf, 4);
@@ -785,8 +889,8 @@ void loop() {
       tag.readFailed = true;
       Serial.println("UL/NTAG read failed — no pages read.");
       lastTag = tag;
-      ledRed();
-      ledRedUntil = millis() + 2000;
+      ledErr();
+      ledErrUntil = millis() + hwCfg.durationErr;
       delay(1000);
       return;
     }
@@ -799,6 +903,6 @@ void loop() {
   }
 
   lastTag = tag;
-  ledGreen();
-  ledGreenUntil = millis() + 3000;
+  ledOk();
+  ledOkUntil = millis() + hwCfg.durationOk;
 }
