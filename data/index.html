@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QIDI NFC Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="badge">NFC Tool</div>
+    <h1>QIDI <span>Box</span><br>Tag Tool</h1>
+    <p class="subtitle">// ESP32-S3 + PN532 &middot; read &amp; write</p>
+  </header>
+
+  <!-- ── TAG DETECTED MODAL ── -->
+  <div class="modal-overlay" id="tagModal">
+    <div class="modal">
+      <div class="modal-title" id="modalTitle">Tag Detected</div>
+      <div class="modal-subtitle" id="modalSubtitle"></div>
+
+      <div class="tag-header" id="tagHeader">
+        <div class="tag-swatch" id="tagSwatch"></div>
+        <div>
+          <div class="tag-material" id="tagMaterial"></div>
+          <div class="tag-color" id="tagColor"></div>
+        </div>
+      </div>
+
+      <div class="payload-preview" id="tagBytes">
+        <div class="byte-group">
+          <div class="byte-box" id="tagByte0"></div>
+          <span class="byte-label">Material</span>
+        </div>
+        <div class="byte-group">
+          <div class="byte-box" id="tagByte1"></div>
+          <span class="byte-label">Color</span>
+        </div>
+        <div class="byte-group">
+          <div class="byte-box" id="tagByte2"></div>
+          <span class="byte-label">Mfr</span>
+        </div>
+      </div>
+
+      <div class="tag-warning" id="tagWarning"></div>
+
+      <div class="tag-section-label" id="rawLabel">Raw Data</div>
+      <div class="tag-raw" id="tagRaw"></div>
+      <div class="tag-uid" id="tagUid"></div>
+
+      <div class="modal-actions">
+        <button class="btn btn-close" onclick="closeModal()">Close</button>
+        <button class="btn btn-load" id="clearBtn" onclick="clearTag()" style="background: var(--error);">Clear Tag</button>
+        <button class="btn btn-load" id="loadBtn" onclick="loadToWriter()">Load to Writer</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="scanHint" class="scanning-hint">
+    <div class="scanning-dot"></div>
+    Scanning for tags&hellip; place a tag on the reader
+  </div>
+
+  <!-- ── TAG WRITER ── -->
+  <div class="card">
+    <p class="card-label">01 &middot; Write Tag</p>
+
+    <div class="field">
+      <label for="material">Material</label>
+      <select id="material" onchange="updatePreview()">
+        <option value="1">PLA</option>
+        <option value="2">PLA Matte</option>
+        <option value="3">PLA Metal</option>
+        <option value="4">PLA Silk</option>
+        <option value="5">PLA-CF</option>
+        <option value="6">PLA-Wood</option>
+        <option value="7">PLA Basic</option>
+        <option value="8">PLA Matte Basic</option>
+        <option value="11">ABS</option>
+        <option value="12">ABS-GF</option>
+        <option value="13">ABS-Metal</option>
+        <option value="14">ABS-Odorless</option>
+        <option value="18">ASA</option>
+        <option value="19">ASA-AERO</option>
+        <option value="24">UltraPA</option>
+        <option value="25">PA-CF</option>
+        <option value="26">UltraPA-CF25</option>
+        <option value="27">PA12-CF</option>
+        <option value="30">PAHT-CF</option>
+        <option value="31">PAHT-GF</option>
+        <option value="32">Support For PAHT</option>
+        <option value="33">Support For PET/PA</option>
+        <option value="34">PC/ABS-FR</option>
+        <option value="37">PET-CF</option>
+        <option value="38">PET-GF</option>
+        <option value="39" selected>PETG Basic</option>
+        <option value="40">PETG Tough</option>
+        <option value="41">PETG Rapido</option>
+        <option value="42">PETG-CF</option>
+        <option value="43">PETG-GF</option>
+        <option value="44">PPS-CF</option>
+        <option value="45">PETG Translucent</option>
+        <option value="47">PVA</option>
+        <option value="49">TPU-Aero</option>
+        <option value="50">TPU</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="color">Color</label>
+      <select id="color" onchange="updatePreview()">
+        <option value="1" data-hex="#FAFAFA">White</option>
+        <option value="2" data-hex="#060606">Black</option>
+        <option value="3" data-hex="#D9E3ED">Light Grey</option>
+        <option value="4" data-hex="#5CF30F">Lime Green</option>
+        <option value="5" data-hex="#63E492">Mint Green</option>
+        <option value="6" data-hex="#2850FF">Blue</option>
+        <option value="7" data-hex="#FE98FE">Pink</option>
+        <option value="8" data-hex="#DFD628">Yellow</option>
+        <option value="9" data-hex="#228332">Dark Green</option>
+        <option value="10" data-hex="#99DEFF">Sky Blue</option>
+        <option value="11" data-hex="#1714B0">Dark Blue</option>
+        <option value="12" data-hex="#CEC0FE">Lavender</option>
+        <option value="13" data-hex="#CADE4B">Yellow-Green</option>
+        <option value="14" data-hex="#1353AB">Navy</option>
+        <option value="15" data-hex="#5EA9FD">Cornflower Blue</option>
+        <option value="16" data-hex="#A878FF">Purple</option>
+        <option value="17" data-hex="#FE717A">Salmon</option>
+        <option value="18" data-hex="#FF362D">Red</option>
+        <option value="19" data-hex="#E2DFCD">Beige</option>
+        <option value="20" data-hex="#898F9B">Grey</option>
+        <option value="21" data-hex="#6E3812">Brown</option>
+        <option value="22" data-hex="#CAC59F">Sand</option>
+        <option value="23" data-hex="#F28636">Orange</option>
+        <option value="24" data-hex="#B87F2B">Gold</option>
+      </select>
+      <div class="color-row">
+        <div class="color-swatch" id="swatch"></div>
+        <span class="color-name" id="colorHex"></span>
+      </div>
+    </div>
+
+    <div class="card" style="padding: 14px; margin-bottom: 16px;">
+      <p class="card-label" style="margin-bottom: 10px;">Payload Preview</p>
+      <div class="payload-preview">
+        <div class="byte-group">
+          <div class="byte-box" id="byte0">0x27</div>
+          <span class="byte-label">Material</span>
+        </div>
+        <div class="byte-group">
+          <div class="byte-box" id="byte1">0x17</div>
+          <span class="byte-label">Color</span>
+        </div>
+        <div class="byte-group">
+          <div class="byte-box">0x01</div>
+          <span class="byte-label">Mfr</span>
+        </div>
+        <div class="byte-group">
+          <div class="byte-box" style="color: var(--muted)">0x00 &times;13</div>
+          <span class="byte-label">Padding</span>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-write" id="writeBtn" onclick="writeTag()">
+      Place Tag &amp; Write
+    </button>
+
+    <div class="status" id="writeStatus">
+      <span class="status-icon" id="writeStatusIcon"></span>
+      <span id="writeStatusMsg"></span>
+    </div>
+  </div>
+
+  <footer>
+    Sector 1 &middot; Block 0 &middot; ISO/IEC 14443-A &middot; 13.56 MHz
+    <br><a href="/wifi-setup" style="color: var(--muted); text-decoration: none; border-bottom: 1px dashed var(--muted);">WiFi Settings</a>
+  </footer>
+
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
