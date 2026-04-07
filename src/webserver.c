@@ -543,6 +543,16 @@ static esp_err_t handle_api_config_post(httpd_req_t *req)
         hw_cfg.led_pin = atoi(val);
     if (get_post_param(body, "led_bright", val, sizeof(val)))
         hw_cfg.led_brightness = atoi(val);
+    if (get_post_param(body, "led_len", val, sizeof(val))) {
+        uint8_t new_len = atoi(val);
+        if (new_len < 1) new_len = 1;
+        if (new_len != hw_cfg.led_length) { hw_cfg.led_length = new_len; restart_required = true; }
+    }
+    if (get_post_param(body, "led_skip", val, sizeof(val))) {
+        uint8_t new_skip = atoi(val);
+        if (new_skip >= hw_cfg.led_length) new_skip = 0;
+        if (new_skip != hw_cfg.led_skip) { hw_cfg.led_skip = new_skip; restart_required = true; }
+    }
 
     if (get_post_param(body, "c_scan", val, sizeof(val)))
         hw_cfg.color_scan = hex_to_color(val);

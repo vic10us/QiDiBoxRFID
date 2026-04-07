@@ -155,6 +155,16 @@
         </div>
       </div>
     </div>
+    <div class="field-row" id="stripRow">
+      <div class="field">
+        <label>Strip Length</label>
+        <input type="number" id="ledLen" min="1" max="255" value="1">
+      </div>
+      <div class="field">
+        <label>Skip (offset)</label>
+        <input type="number" id="ledSkip" min="0" max="254" value="0">
+      </div>
+    </div>
   </div>
 
   <!-- LED Colors -->
@@ -252,6 +262,8 @@
     var en = document.getElementById('ledEnabled').checked;
     cs.className = (!en || t === 0) ? 'card disabled' : 'card';
     cs.id = 'colorSection';
+    var sr = document.getElementById('stripRow');
+    if (sr) sr.style.display = (t === 0) ? 'none' : 'flex';
   }
 
   async function loadConfig() {
@@ -263,6 +275,8 @@
       document.getElementById('ledPin').value = cfg.led.pin;
       document.getElementById('ledBright').value = cfg.led.brightness;
       document.getElementById('brightVal').textContent = cfg.led.brightness;
+      document.getElementById('ledLen').value = cfg.led.length || 1;
+      document.getElementById('ledSkip').value = cfg.led.skip || 0;
       document.getElementById('cScan').value = cfg.colors.scan;
       document.getElementById('cOk').value = cfg.colors.ok;
       document.getElementById('cErr').value = cfg.colors.err;
@@ -287,6 +301,8 @@
         + '&led_type=' + document.getElementById('ledType').value
         + '&led_pin=' + document.getElementById('ledPin').value
         + '&led_bright=' + document.getElementById('ledBright').value
+        + '&led_len=' + document.getElementById('ledLen').value
+        + '&led_skip=' + document.getElementById('ledSkip').value
         + '&c_scan=' + encodeURIComponent(document.getElementById('cScan').value)
         + '&c_ok=' + encodeURIComponent(document.getElementById('cOk').value)
         + '&c_err=' + encodeURIComponent(document.getElementById('cErr').value)

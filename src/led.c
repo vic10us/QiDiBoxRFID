@@ -19,7 +19,7 @@ void led_init(void)
         // WS2812 or SK6812 via RMT
         led_strip_config_t strip_cfg = {
             .strip_gpio_num = hw_cfg.led_pin,
-            .max_leds = 1,
+            .max_leds = hw_cfg.led_length > 0 ? hw_cfg.led_length : 1,
             .led_model = (hw_cfg.led_type == LED_SK6812) ? LED_MODEL_SK6812 : LED_MODEL_WS2812,
             .led_pixel_format = (hw_cfg.led_type == LED_SK6812) ? LED_PIXEL_FORMAT_GRBW : LED_PIXEL_FORMAT_GRB,
             .flags.invert_out = false,
@@ -54,7 +54,16 @@ void led_set_color(uint32_t packed_rgb)
     if (hw_cfg.led_type == LED_GPIO) {
         gpio_set_level(hw_cfg.led_pin, (r || g || b) ? 1 : 0);
     } else if (strip_handle) {
-        led_strip_set_pixel(strip_handle, 0, r, g, b);
+        uint8_t skip = hw_cfg.led_skip;
+        uint8_t len = hw_cfg.led_length > 0 ? hw_cfg.led_length : 1;
+        if (skip >= len) skip = 0;
+        // Skipped LEDs stay off; active LEDs get the color
+        for (uint8_t i = 0; i < skip; i++) {
+            led_strip_set_pixel(strip_handle, i, 0, 0, 0);
+        }
+        for (uint8_t i = skip; i < len; i++) {
+            led_strip_set_pixel(strip_handle, i, r, g, b);
+        }
         led_strip_refresh(strip_handle);
     }
 }

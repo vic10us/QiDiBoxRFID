@@ -32,8 +32,12 @@
   #error "Unsupported ESP32 target. Supported: ESP32-S3, ESP32-C3, ESP32-C6."
 #endif
 
-#define DEFAULT_LED_TYPE       1       // WS2812
+#ifndef DEFAULT_LED_TYPE
+  #define DEFAULT_LED_TYPE     1       // 0=GPIO, 1=WS2812, 2=SK6812
+#endif
 #define DEFAULT_LED_BRIGHTNESS 40
+#define DEFAULT_LED_LENGTH     1
+#define DEFAULT_LED_SKIP       0
 #define DEFAULT_COLOR_SCAN     0x000028  // blue
 #define DEFAULT_COLOR_OK       0x002800  // green
 #define DEFAULT_COLOR_ERR      0x280000  // red
@@ -53,6 +57,8 @@ typedef struct {
     led_type_t led_type;
     uint8_t  led_pin;
     uint8_t  led_brightness;
+    uint8_t  led_length;
+    uint8_t  led_skip;
 
     uint32_t color_scan;
     uint32_t color_ok;

@@ -19,6 +19,8 @@ void config_load(hw_config_t *cfg)
         cfg->led_type      = DEFAULT_LED_TYPE;
         cfg->led_pin       = DEFAULT_LED_PIN;
         cfg->led_brightness = DEFAULT_LED_BRIGHTNESS;
+        cfg->led_length    = DEFAULT_LED_LENGTH;
+        cfg->led_skip      = DEFAULT_LED_SKIP;
         cfg->color_scan    = DEFAULT_COLOR_SCAN;
         cfg->color_ok      = DEFAULT_COLOR_OK;
         cfg->color_err     = DEFAULT_COLOR_ERR;
@@ -40,6 +42,10 @@ void config_load(hw_config_t *cfg)
     cfg->led_type = (nvs_get_u8(h, "led_type", &u8) == ESP_OK) ? (led_type_t)u8 : DEFAULT_LED_TYPE;
     cfg->led_pin = (nvs_get_u8(h, "led_pin", &u8) == ESP_OK) ? u8 : DEFAULT_LED_PIN;
     cfg->led_brightness = (nvs_get_u8(h, "led_bright", &u8) == ESP_OK) ? u8 : DEFAULT_LED_BRIGHTNESS;
+    cfg->led_length = (nvs_get_u8(h, "led_len", &u8) == ESP_OK) ? u8 : DEFAULT_LED_LENGTH;
+    cfg->led_skip   = (nvs_get_u8(h, "led_skip", &u8) == ESP_OK) ? u8 : DEFAULT_LED_SKIP;
+    if (cfg->led_length < 1) cfg->led_length = 1;
+    if (cfg->led_skip >= cfg->led_length) cfg->led_skip = 0;
 
     cfg->color_scan = (nvs_get_u32(h, "c_scan", &u32) == ESP_OK) ? u32 : DEFAULT_COLOR_SCAN;
     cfg->color_ok   = (nvs_get_u32(h, "c_ok", &u32) == ESP_OK) ? u32 : DEFAULT_COLOR_OK;
@@ -66,6 +72,8 @@ void config_save(const hw_config_t *cfg)
     nvs_set_u8(h, "led_type", (uint8_t)cfg->led_type);
     nvs_set_u8(h, "led_pin", cfg->led_pin);
     nvs_set_u8(h, "led_bright", cfg->led_brightness);
+    nvs_set_u8(h, "led_len", cfg->led_length);
+    nvs_set_u8(h, "led_skip", cfg->led_skip);
 
     nvs_set_u32(h, "c_scan", cfg->color_scan);
     nvs_set_u32(h, "c_ok", cfg->color_ok);
@@ -90,7 +98,7 @@ void config_reset(void)
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) return;
 
     const char *keys[] = {
-        "led_en", "led_type", "led_pin", "led_bright",
+        "led_en", "led_type", "led_pin", "led_bright", "led_len", "led_skip",
         "c_scan", "c_ok", "c_err", "c_busy", "c_setup",
         "t_ok", "t_err", "i2c_sda", "i2c_scl", "boot_pin"
     };
@@ -122,13 +130,14 @@ int config_to_json(const hw_config_t *cfg, char *buf, size_t buf_size)
     color_to_hex(cfg->color_setup, cu, sizeof(cu));
 
     return snprintf(buf, buf_size,
-        "{\"led\":{\"enabled\":%s,\"type\":%d,\"pin\":%d,\"brightness\":%d},"
+        "{\"led\":{\"enabled\":%s,\"type\":%d,\"pin\":%d,\"brightness\":%d,\"length\":%d,\"skip\":%d},"
         "\"colors\":{\"scan\":\"%s\",\"ok\":\"%s\",\"err\":\"%s\",\"busy\":\"%s\",\"setup\":\"%s\"},"
         "\"timings\":{\"ok_ms\":%d,\"err_ms\":%d},"
         "\"i2c\":{\"sda\":%d,\"scl\":%d},"
         "\"boot_pin\":%d}",
         cfg->led_enabled ? "true" : "false",
         (int)cfg->led_type, cfg->led_pin, cfg->led_brightness,
+        cfg->led_length, cfg->led_skip,
         cs, co, ce, cb, cu,
         cfg->duration_ok, cfg->duration_err,
         cfg->sda_pin, cfg->scl_pin,
