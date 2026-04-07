@@ -24,6 +24,7 @@
 #include "wifi.h"
 #include "dns_server.h"
 #include "webserver.h"
+#include "console.h"
 
 static const char *TAG = "main";
 
@@ -38,6 +39,7 @@ static const char *TAG = "main";
 // Shared NFC device and state — accessed by webserver.c
 pn532_t nfc_dev;
 bool nfc_busy = false;
+bool nfc_ready = false;  // false if PN532 init/probe failed; NFC ops are skipped
 
 // These are defined in webserver.c
 typedef enum {
@@ -235,6 +237,16 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    // Start console (also unbuffers stdio so logs appear promptly)
+    console_start();
+
+    // Quiet down the noisy WiFi driver logs so they don't bury the prompt
+    esp_log_level_set("wifi", ESP_LOG_WARN);
+    esp_log_level_set("wifi_init", ESP_LOG_WARN);
+    esp_log_level_set("phy_init", ESP_LOG_WARN);
+    esp_log_level_set("net80211", ESP_LOG_WARN);
+    esp_log_level_set("pp", ESP_LOG_WARN);
+
     ESP_LOGI(TAG, "=== QIDI NFC Tool (ESP-IDF) ===");
 
     // Load hardware config
@@ -244,32 +256,23 @@ void app_main(void)
     led_init();
     led_off();
 
-    // Init PN532
+    // Init PN532 — failures are non-fatal so settings remain reachable via web UI
     if (!pn532_init(&nfc_dev, hw_cfg.sda_pin, hw_cfg.scl_pin)) {
-        ESP_LOGE(TAG, "Failed to init I2C for PN532");
-        while (1) {
-            led_err();
-            vTaskDelay(pdMS_TO_TICKS(500));
-            led_off();
-            vTaskDelay(pdMS_TO_TICKS(500));
+        ESP_LOGW(TAG, "I2C init failed (SDA=%d SCL=%d). NFC disabled — fix in /settings.",
+            hw_cfg.sda_pin, hw_cfg.scl_pin);
+    } else {
+        uint32_t ver = pn532_get_firmware_version(&nfc_dev);
+        if (!ver) {
+            ESP_LOGW(TAG, "PN532 not detected on I2C (SDA=%d SCL=%d). "
+                "Check wiring/DIP switches. NFC disabled.",
+                hw_cfg.sda_pin, hw_cfg.scl_pin);
+        } else {
+            ESP_LOGI(TAG, "PN532 found. Chip: PN5%02X, Firmware: %d.%d",
+                (ver >> 24) & 0xFF, (ver >> 16) & 0xFF, (ver >> 8) & 0xFF);
+            pn532_sam_config(&nfc_dev);
+            nfc_ready = true;
         }
     }
-
-    uint32_t ver = pn532_get_firmware_version(&nfc_dev);
-    if (!ver) {
-        ESP_LOGE(TAG, "PN532 not found. Check wiring and DIP switches.");
-        while (1) {
-            led_err();
-            vTaskDelay(pdMS_TO_TICKS(500));
-            led_off();
-            vTaskDelay(pdMS_TO_TICKS(500));
-        }
-    }
-
-    ESP_LOGI(TAG, "PN532 found. Chip: PN5%02X, Firmware: %d.%d",
-        (ver >> 24) & 0xFF, (ver >> 16) & 0xFF, (ver >> 8) & 0xFF);
-
-    pn532_sam_config(&nfc_dev);
 
     // Boot button check: hold to reset all settings
     gpio_config_t boot_cfg = {
@@ -316,19 +319,18 @@ void app_main(void)
     }
 
     if (!has_creds) {
-        ESP_LOGI(TAG, "No WiFi credentials found. Starting setup AP...");
+        printf("\r\nNo WiFi credentials found. Starting setup AP...\r\n");
         led_setup_color();
         wifi_init_ap(AP_SSID);
 
         char ip[16];
         wifi_get_ip_str(ip, sizeof(ip));
-        ESP_LOGI(TAG, "AP started: %s  Setup URL: http://%s", AP_SSID, ip);
+        printf("\r\n*** AP MODE ***\r\n");
+        printf("SSID:      %s\r\n", AP_SSID);
+        printf("Setup URL: http://%s\r\n\r\n", ip);
 
         dns_server_start(ip);
         webserver_start(true);
-
-        ESP_LOGI(TAG, "Setup server started. Connect to '%s' WiFi.", AP_SSID);
-        // Stay in AP mode — no NFC polling task
         return;
     }
 
@@ -337,14 +339,16 @@ void app_main(void)
     ESP_LOGI(TAG, "Connecting to %s...", ssid);
 
     if (!wifi_init_sta(ssid, pass, 15000)) {
-        ESP_LOGW(TAG, "WiFi connection failed! Starting setup AP...");
+        printf("\r\nWiFi connection failed! Falling back to setup AP...\r\n");
         wifi_stop();
         led_setup_color();
         wifi_init_ap(AP_SSID);
 
         char ip[16];
         wifi_get_ip_str(ip, sizeof(ip));
-        ESP_LOGI(TAG, "Fallback AP: %s  URL: http://%s", AP_SSID, ip);
+        printf("\r\n*** FALLBACK AP MODE ***\r\n");
+        printf("SSID:      %s\r\n", AP_SSID);
+        printf("Setup URL: http://%s\r\n\r\n", ip);
 
         dns_server_start(ip);
         webserver_start(true);
@@ -353,13 +357,19 @@ void app_main(void)
 
     char ip[16];
     wifi_get_ip_str(ip, sizeof(ip));
-    ESP_LOGI(TAG, "Connected! IP: http://%s", ip);
+    printf("\r\n*** WIFI CONNECTED ***\r\n");
+    printf("SSID: %s\r\n", ssid);
+    printf("URL:  http://%s\r\n\r\n", ip);
     led_scan();
 
     // Start web server in normal mode
     webserver_start(false);
     ESP_LOGI(TAG, "Web server started. Open the IP above in your browser.");
 
-    // Start NFC polling task
-    xTaskCreate(nfc_poll_task, "nfc_poll", 4096, NULL, 5, NULL);
+    // Start NFC polling task only if the reader was detected
+    if (nfc_ready) {
+        xTaskCreate(nfc_poll_task, "nfc_poll", 4096, NULL, 5, NULL);
+    } else {
+        ESP_LOGW(TAG, "NFC polling disabled — reader not initialized.");
+    }
 }

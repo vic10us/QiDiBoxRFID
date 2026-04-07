@@ -22,6 +22,9 @@
     #define DEFAULT_SCL_PIN    23
     #define DEFAULT_LED_PIN    15
     #define DEFAULT_BOOT_PIN   9
+    #ifndef DEFAULT_LED_TYPE
+      #define DEFAULT_LED_TYPE 0       // 0=GPIO, 1=WS2812, 2=SK6812
+    #endif
   #else
     #define DEFAULT_SDA_PIN    6
     #define DEFAULT_SCL_PIN    7

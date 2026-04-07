@@ -30,6 +30,7 @@ static esp_err_t send_gzipped(httpd_req_t *req, const char *content_type,
 // Shared NFC state — defined in main.c
 extern pn532_t nfc_dev;
 extern bool nfc_busy;
+extern bool nfc_ready;
 
 typedef enum {
     CARD_UNKNOWN = 0,
@@ -172,7 +173,11 @@ static esp_err_t handle_status(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
 
     if (!last_tag.valid) {
-        return httpd_resp_sendstr(req, "{\"tagPresent\":false,\"timestamp\":0}");
+        char resp[80];
+        snprintf(resp, sizeof(resp),
+            "{\"tagPresent\":false,\"timestamp\":0,\"nfcReady\":%s}",
+            nfc_ready ? "true" : "false");
+        return httpd_resp_sendstr(req, resp);
     }
 
     char uid_str[22];
@@ -239,6 +244,11 @@ static esp_err_t handle_status(httpd_req_t *req)
 
 static esp_err_t handle_write(httpd_req_t *req)
 {
+    if (!nfc_ready) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_sendstr(req, "NFC reader not initialized. Check wiring and I2C pins in /settings.");
+        return ESP_OK;
+    }
     char val[16];
     if (!get_query_param(req, "material", val, sizeof(val)) || !val[0]) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing material parameter.");
@@ -370,6 +380,11 @@ static esp_err_t handle_write(httpd_req_t *req)
 
 static esp_err_t handle_clear(httpd_req_t *req)
 {
+    if (!nfc_ready) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_sendstr(req, "NFC reader not initialized. Check wiring and I2C pins in /settings.");
+        return ESP_OK;
+    }
     ESP_LOGI(TAG, "Clear request received");
 
     nfc_busy = true;
